@@ -1,0 +1,12 @@
+Package: zenodomanageR
+Title: Interface to Zenodo API
+Version: 0.0.0.9000
+Authors@R: 
+    person("Guillermo", "Porriños", email = "grmo.prieto@outlook.com", role = c("aut", "cre"))
+Description: Tools to manage Zenodo depositions and files via API, including: (1) get deposition ID using deposition names; (2) deposition creation; (3) draft creation and deletion; (4) file upload and deletion; (5) publish depositions; (6) polling for status; (...) others.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.3
+Imports:
+    httr
