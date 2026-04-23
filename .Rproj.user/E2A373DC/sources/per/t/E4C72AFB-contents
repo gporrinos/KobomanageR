@@ -179,9 +179,11 @@ kobo_download <- function(url,
 #' }
 #'
 #' @export
-kobo_delete_submission <- function(assetid = NULL,
+kobo_delete_submission <- function(url     = "eu.kobotoolbox.org",
+                                   username,
+                                   password,
+                                   assetid = NULL,
                                    name    = NULL,
-                                   url     = "eu.kobotoolbox.org",
                                    submission_id = NULL,
                                    submission_uuid = NULL,
                                    language = "en"){
