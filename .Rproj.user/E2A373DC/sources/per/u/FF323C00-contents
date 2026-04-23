@@ -1,0 +1,79 @@
+
+kobo_delete_submission <- function(url     = "eu.kobotoolbox.org",
+                                   username,
+                                   password,
+                                   assetid = NULL,
+                                   name    = NULL,
+                                   submission_id = NULL,
+                                   submission_uuid = NULL,
+                                   language = "en"){
+  
+  
+  
+  # --------- Multilingual messages -------- #
+  
+  msg = MSSG(language)
+  
+  
+  
+  # ----------- Input validation ----------- #
+  if(is.null(assetid) & is.null(name)) {
+    stop(msg$missing_assetid_and_name)
+  }
+  if(is.null(submission_id) & is.null(submission_uuid)) {
+    stop(msg$missing_id_and_uuid)
+  }
+  
+  
+  
+  # --- Obtain 'assetid' if not provided --- #
+  if(is.null(assetid)){
+    api     = kobo_api(url, username, password)
+    assetid = api$assetid[which(api$name == name)]
+    if (length(assetid) == 0) {
+      stop(paste0(msg$questionnaire, " '", name, "' ", msg$not_found))
+    }
+  }
+  
+  
+  
+  #  Obtain ids from uuids if not provided   #
+  if(is.null(submission_id)){
+    dat <- kobo_download(url      = url, 
+                         assetid  = assetid,
+                         username = username,
+                         password = password, 
+                         language = language
+    )
+    ids   = unlist( lapply( dat, function(x) coalesce_if_null(x$'_id') ) )
+    uuids = unlist( lapply( dat, function(x) coalesce_if_null(x$'_uuid') ) )
+    submission_id = ids[which(uuids %in% submission_uuid)]
+    
+  }
+  
+  # -------- Delete submissions  -------- #
+  
+  for(subm in submission_id){
+    submission_url = paste0("https://", url,
+                            "/api/v2/assets/",assetid,
+                            "/submissions/", subm)
+    
+    res = httr::DELETE(url = submission_url, 
+                       httr::authenticate(username, password))
+    
+    # Status messages
+    message("  ", switch(
+      as.character(res$status_code),
+      
+      "204" = paste0(msg$Submission, " '", subm, "' ", msg$deleted_successfully),
+      "200" = paste0(msg$Submission, " '", subm, "' ", msg$deleted_successfully),
+      "404" = paste0(msg$Submission, " '", subm, "' ", msg$not_found),
+      "401" = paste0(msg$deletion_of, " '", subm, "' ", msg$unauthorised),
+      
+      paste("Unexpected error (HTTP", res$status_code, ")")
+    )
+    )
+  }
+}
+
+

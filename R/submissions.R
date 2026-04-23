@@ -142,11 +142,13 @@ kobo_download <- function(url,
 #' `name`. If `submission_id` is not provided, it will be derived from
 #' the provided `submission_uuid`.
 #'
+#' @param url Character. KoboToolbox server URL. Defaults to
+#'   `"eu.kobotoolbox.org"`.
+#' @param username Character. KoboToolbox username for authentication.
+#' @param password Character. KoboToolbox password for authentication.
 #' @param assetid Character. KoboToolbox asset UID. Optional if `name` is provided.
 #' @param name Character. Name of the form (questionnaire). Used to retrieve
 #'   `assetid` if not supplied.
-#' @param url Character. KoboToolbox server URL. Defaults to
-#'   `"eu.kobotoolbox.org"`.
 #' @param submission_id Character vector. One or more submission `_id` values.
 #' @param submission_uuid Character vector. One or more submission `_uuid` values.
 #'   Used only if `submission_id` is not provided.
@@ -235,7 +237,7 @@ kobo_delete_submission <- function(url     = "eu.kobotoolbox.org",
   
   for(subm in submission_id){
     submission_url = paste0("https://", url,
-                            "/api/v2/assets/",assetid,
+                            "/assets/",assetid,
                             "/submissions/", subm)
     
     res = httr::DELETE(url = submission_url, 
