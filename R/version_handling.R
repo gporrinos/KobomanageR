@@ -3,12 +3,12 @@
 kobo_version_names <- function(url,
                               username,
                               password,
-                              questionnaire_name,
+                              name,
                               select_uids = NULL){
   
   
   api      <- kobo_api(url, username, password) 
-  assetid  <- api$asset[which(api$name == questionnaire_name)]
+  assetid  <- api$asset[which(api$name == name)]
   asseturl <- paste0("https://", url, "/api/v2/assets/", assetid, "/versions/")
   
   # Obtain a list of all uids
