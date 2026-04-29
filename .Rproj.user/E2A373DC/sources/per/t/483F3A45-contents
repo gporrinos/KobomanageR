@@ -1,0 +1,628 @@
+
+devtools::install()
+library(estatisticapesqueiraSTP)
+
+
+rm(list = ls())
+
+
+
+local_data_configuration =
+  readxl::read_excel(file.path("SUPORTE", "support_tables", "configuration.xlsx"),
+                     sheet = "local_data")
+local_data_directory <- local_data_configuration$local_data_directory
+method               <- local_data_configuration$method
+fileformat           <- local_data_configuration$fileformat
+grouping_variable    <- local_data_configuration$group
+
+
+
+if(!dir.exists(file.path(local_data_directory))) {
+  dir.create(local_data_directory)
+}
+
+
+questionnaire_information_path <- file.path("SUPORTE", "support_tables", "questionnaire_information.xlsx")
+dat_information <- readxl::read_excel(questionnaire_information_path, sheet = "data")
+variables       <- readxl::read_excel(questionnaire_information_path, sheet = "variables")
+
+
+language = "en"
+
+zenodo_info             = "SUPORTE/support_tables/zenodo.xlsx"
+instance         = readxl::read_excel(zenodo_info, sheet = "ZENODO")$zenodo_instance
+deposition_title = readxl::read_excel(zenodo_info, sheet = "ZENODO")$deposition_title
+token = readRDS(file.path("SUPORTE", "credentials", "zenodo_token.rds"))
+deposition_title        = readxl::read_excel(zenodo_info, sheet = "ZENODO")$deposition_title
+deposition_description  = readxl::read_excel(zenodo_info, sheet = "ZENODO")$deposition_description
+deposition_creators     = readxl::read_excel(zenodo_info, sheet = "creators")
+deposition_creators     = lapply(c(1:nrow(deposition_creators)),
+                                 function(i) {
+                                   list(name = deposition_creators$name[i],
+                                        affiliation = deposition_creators$affiliation[i]
+                                   )
+                                 })
+
+
+
+deposition <- GET_LATEST_PUBLISHED_DEPOSITION(title    = deposition_title,
+                                              token    = token,
+                                              instance = instance,
+                                              language = language)
+datnames = dat_information$dat[dat_information$dat %in% gsub(".rds", "", unlist(lapply(deposition$files, function(x) x$filename)))]
+dat_information = dat_information[dat_information$dat %in% datnames, ]
+
+
+getinfo <- function(x){
+  output = lapply(datnames,
+         function(datname)
+           as.data.frame(dat_information)[which(dat_information$dat == datname),
+                           colnames(dat_information) == x])
+  names(output) <- datnames
+  return(output)
+}
+nested <- lapply(getinfo("location"), function(x) x=="nested")
+parent <- lapply(getinfo("parent"), function(x)
+  dat_information$dat[
+    dat_information$location == "parent" & dat_information$parent == x
+  ]
+  )
+run_if_no_new_data = FALSE
+upload_raw_data    = TRUE
+
+csv_separator = NULL
+
+variable_class = variables
+
+
+
+
+
+
+
+
+
+
+
+
+full_pipeline <- function(
+    datnames,
+    variable_class,
+    nested,
+    parent,
+    grouping_variable,
+    fileformat,
+
+    fileformat,
+    csv_separator            = NULL,
+    run_if_no_new_data       = FALSE,
+    upload_raw_data          = TRUE,
+    update_rds_deposition    = FALSE,
+    update_data_deposition   = TRUE,
+    deposition_title,
+    token,
+    deposition_description   = NULL,
+    deposition_creators      = NULL) {
+
+
+
+
+
+  ### ----------- 1. APPEND NEW DATA TO LOCAL DATA  ----------- #
+
+  newdat <- c()
+  for(datname in datnames) {
+    variable_class = variable_class[which(variable_class$dat == datname),]
+
+    # Load local data
+    local.dat = load_local_data(datname,
+                                local_data_directory,
+                                method,
+                                fileformat,
+                                variable_class = variable_class)
+
+    # Load data
+    dat = read_zenodo_rds_file(deposition_title = deposition_title,
+                               instance         = instance,
+                               filename         = paste0(datname, ".rds"),
+                               token            = token)
+
+    # If local.dat is empty, then local.dat = dat
+    if(is.null(local.dat) & !is.null(dat)) {
+      newdat <- c(newdat,datname)
+    } else
+      # If dat contains data not in local.dat, append it to local.dat
+      if(length(which(!local.dat$uuid %in% dat$uuid)) > 0) {
+        newdat <- c(newdat,datname)
+        local.dat = standardise.class(template = dat,
+                                      output   = local.dat)
+        dat    <- dat[!dat$uuid %in% local.dat$uuid,]
+        dat    <- dplyr::bind_rows(local.dat, dat)
+      }
+    assign(datname,dat)
+    rm(dat, local.dat)
+  }
+
+
+
+
+  if(length(newdat) == 0  &  !run_if_no_new_data) {
+    cat("There are no new submissions")
+  } else {
+
+
+
+
+    data_deposition <- CREATE_NEW_VERSION_OR_DEPOSITION(title = paste0(deposition_title, " DATA"),
+                                                        description = deposition_description,
+                                                        creators    = deposition_creators,
+                                                        token       = token,
+                                                        instance    = instance,
+                                                        language    = language)
+
+
+
+
+    ### ----------- 2. PROCESS RAW DATA, IF RELEVANT  ----------- #
+
+    if(upload_raw_data){
+      for(datname in datnames) {
+        assign(paste0(datname, "_RAW"),
+               read_zenodo_rds_file(deposition_title = deposition_title,
+                                    instance         = instance,
+                                    filename         = paste0(datname, "_RAW.rds"),
+                                    token            = token))
+      }
+      for(datname in datnames) {
+        dat_RAW    = get(paste0(datname, "_RAW"))
+        parent_RAW =
+          if(length(parent[[datname]]) == 0) NULL else
+            get(paste0(parent[[datname]], "_RAW"))
+        upload_dfs_to_deposition(
+          data              = dat_RAW,
+          name              = paste0(datname, "_RAW"),
+          fileformat        = fileformat,
+          csv_separator     = csv_separator,
+          method            = method,
+          nested            = nested[[datname]],
+          grouping_variable = grouping_variable,
+          parent            = parent_RAW,
+          append_group_name = TRUE,
+          deposition_id     = data_deposition$id,
+          token             = token,
+          instance          = instance,
+          language          = "en")
+      }
+    }
+
+
+
+
+    ### ----------- 3. PROCESS DATA  ----------- #
+    for(datname in datnames){
+      filepaths <- get_local_file_paths(datnames = datname,
+                                        local_data_directory = local_data_directory,
+                                        method  = method,
+                                        fileformat = fileformat)
+      if(exists("old.filepaths", envir = environment(), inherits = FALSE))
+        old.filepaths = rbind(old.filepaths,filepaths) else old.filepaths = filepaths
+    }
+
+
+    for(datname in datnames) {
+      # Get dat and parent
+      dat    = get(datname)
+      parent =
+        if(length(parent[[datname]]) == 0)
+          NULL   else
+            get(parent[[datname]])
+
+      # Rewrite local data
+        remove_files(old.filepaths$filepath[which(old.filepaths$dat == datname)])
+        filepaths <- write_newdata(
+          data                 = dat,
+          name                 = datname,
+          fileformat           = fileformat,
+          csv_separator        = csv_separator,
+          local_data_directory = local_data_directory,
+          method               = method,
+          nested               = nested[[datname]],
+          grouping_variable    = grouping_variable,
+          parent               = parent,
+          return.filepaths     = TRUE)
+        if(exists("all.filepaths", envir = environment(), inherits = FALSE))
+          all.filepaths = rbind(all.filepaths,filepaths) else
+            all.filepaths = filepaths
+
+
+      # Upload processed data to data deposition
+      upload_dfs_to_deposition(
+        data              = get(datname),
+        name              = datname,
+        fileformat        = fileformat,
+        csv_separator     = csv_separator,
+        method            = method,
+        nested            = nested[[datname]],
+        grouping_variable = grouping_variable,
+        parent            = parent,
+        append_group_name = TRUE,
+        deposition_id     = data_deposition$id,
+        token             = token,
+        instance          = instance,
+        language          = "en")
+    }
+
+
+
+    ### ----------- 6. DELETE EMPTY DIRECTORIES  ----------- #
+
+    delete = levels(as.factor(old.filepaths$path[!old.filepaths$path %in% all.filepaths$path &
+                                         !all.filepaths$path == local_data_directory]))
+    if(length(delete) > 0){
+      cat("Apagando directórios vazios\n")
+      remove_files(
+        path = delete,
+        recursive = TRUE
+      )
+    }
+
+
+
+
+
+    ### ------------- 7. PUBLISH DEPOSITIONS  -------------- #
+
+
+      PUBLISH_DEPOSITION(id    = data_deposition$id,
+                         token = token,
+                         instance = instance)
+
+
+    if(update_rds_deposition){
+      rds_deposition <- CREATE_NEW_VERSION_OR_DEPOSITION(
+        title       = deposition_title,
+        description = deposition_description,
+        creators    = deposition_creators,
+        token       = token,
+        instance    = instance)
+      for(datname in datnames){
+
+        outdir <- file.path(tempdir(),
+                            gsub(" ", "", gsub("-", "", gsub(":", "", substr(Sys.time(),3,19)))))
+        dir.create(outdir)
+        filepath   <- file.path(outdir, paste0(datname,".rds"))
+        saveRDS(get(datname), filepath)
+        UPLOAD_TO_DEPOSITION(filepath = filepath,
+                             name     = paste0(datname, ".rds"),
+                             id       = rds_deposition$id,
+                             token    = token,
+                             instance = instance,
+                             language = language)
+      }
+
+      PUBLISH_DEPOSITION(id    = rds_deposition$id,
+                         token = token,
+                         instance = instance)
+    }
+
+
+  }
+
+
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+save_and_upload_newdat <- function(datnames,
+                                   method,
+                                   fileformat,
+                                   delete_local_data       = TRUE,
+                                   local_data_filepaths    = data.frame(filepath = NA,
+                                                                        dat      = NA)[-1,],
+                                   upload_rds_file         = FALSE,
+                                   rds_deposition_name     = NULL,
+                                   upload_data             = TRUE,
+                                   delete_previous_deposition_files = FALSE,
+                                   data_deposition_name    = NULL,
+                                   deposition_description  = NULL,
+                                   deposition_creators     = NULL,
+                                   token                   = NULL,
+                                   instance
+){
+
+
+
+  newdirs = c()
+
+
+
+  ### ------------- 1. CREATE DEPOSITIONS  ------------- ###
+
+
+  if(upload_data) {
+    data_deposition <- CREATE_NEW_VERSION_OR_DEPOSITION(
+      title       = data_deposition_name,
+      description = deposition_description,
+      creators    = deposition_creators,
+      token       = token,
+      instance    = instance)
+
+    for(x in data_deposition$files)
+      DELETE(x$links$self,
+             add_headers(Authorization = paste("Bearer", token)))
+  }
+
+
+  if(upload_rds_file) {
+    rds_deposition <- CREATE_NEW_VERSION_OR_DEPOSITION(
+      title       = rds_deposition_name,
+      description = deposition_description,
+      creators    = deposition_creators,
+      token       = token,
+      instance    = instance)
+  }
+
+
+
+
+
+  for(datname in  datnames) {
+    cat("\n")
+
+    ### ------------ 2. DELETE PREVIOUS DATA  ------------ ###
+    if(delete_local_data){
+      delete <- local_data_filepaths$filepath[local_data_filepaths$dat == datname]
+      if(length(delete) > 0) {
+        cat("Apagando ficheiros prévios de ",datname,"\n")
+        remove_files(
+          path = delete,
+          recursive = FALSE
+        )
+      }
+    }
+
+
+
+
+
+
+
+
+    ### -------------- 3. UPLOAD RDS FILE  -------------- ###
+
+
+
+    if(upload_rds_file){
+      filepath   <- file.path(tempfiles, paste0(datname,".rds"))
+      saveRDS(dat, filepath)
+      UPLOAD_TO_DEPOSITION(filepath = filepath,
+                           name     = paste0(datname, ".rds"),
+                           id       = rds_deposition$id,
+                           token    = token,
+                           instance = instance)
+    }
+
+
+
+
+
+
+    ### --------------- 4. METHOD = FULL  --------------- ###
+
+
+
+    if(method == "FULL"){
+
+      for(x in c("processed", "raw")){
+
+        # Create file name and file path for processed data
+        if(x == "processed") {
+          nam = datname
+          filepath  <- file.path(LOCAL_DATA_DIRECTORY,
+                                 paste0(nam, ".", fileformat))
+        }
+
+        # Create file name and file path for raw data
+        if(x == "raw"){
+          nam = paste0(datname, "_RAW")
+          filepath  <- file.path(tempfiles,
+                                 paste0(nam, ".", fileformat))
+        }
+
+        # Save local file
+        filename    <- paste0(nam, ".", fileformat)
+        writeDAT(data       = get(datname),
+                 filepath   = filepath,
+                 fileformat = fileformat,
+                 sheetname  = datname)
+        if(x == "processed"){
+          cat(paste("Criado ficheiro", filename, "em", LOCAL_DATA_DIRECTORY, "\n"))
+        }
+
+        # Upload to deposition
+        if(upload_data) {
+          UPLOAD_TO_DEPOSITION(filepath = filepath,
+                               name     = filename,
+                               id       = data_deposition$id,
+                               token    = token,
+                               instance = instance)
+          cat(paste("Carregado ficheiro", filename, "em Zenodo\n"))
+        }
+      }
+    }
+
+
+
+
+
+
+    ### --------------- 5. METHOD = GROUPED  --------------- #
+
+
+    if(method == "GROUPED"){
+
+
+      for(x in c("processed", "raw")){
+
+        # Get data, name and grouping vector of processed data
+        if(x == "processed") {
+          nam = datname
+          grouping_vector <- get_grouping_vector(datname = datname,
+                                                 group   = group,
+                                                 raw = FALSE)
+        }
+
+        # Get name and grouping vector of raw data
+        if(x == "raw") {
+          nam = paste0(datname, "_RAW")
+          grouping_vector <- get_grouping_vector(datname = datname,
+                                                 group   = group,
+                                                 raw = TRUE)
+        }
+
+        # Get data
+        dat = get(nam)
+
+        # Get grouping levels
+        output_dirs <- levels(as.factor(grouping_vector))
+        if(length(which(is.na(grouping_vector)) > 0)) output_dirs <- c(output_dirs, "NA")
+        grouping_vector[is.na(grouping_vector)] <- "NA"
+        newdirs <- c(newdirs,
+                     file.path(LOCAL_DATA_DIRECTORY, output_dirs))
+
+        for(directory in output_dirs){
+          if(x == "processed") {
+            filename = paste0(nam, ".", fileformat)
+            path = file.path(LOCAL_DATA_DIRECTORY, directory)
+            if(!file.exists(path)) dir.create(path = path)
+          }
+          if(x == "raw") {
+            filename = paste0(nam, "_", directory,".", fileformat)
+            path     = file.path(tempfiles)
+          }
+
+          # Create file path
+          filepath = file.path(path, filename)
+
+
+          # Filter by grouping level (i.e., directory)
+          temp     = dat[which(grouping_vector == directory),]
+
+
+          # Save local file (subset of data == grouping level)
+          writeDAT(data       = temp,
+                   filepath   = filepath,
+                   fileformat = fileformat,
+                   sheetname  = datname)
+          if(x == "processed"){
+            cat(paste0("Criado ficheiro ", filename,
+                       " em ", LOCAL_DATA_DIRECTORY, "/", directory, "\n"))
+          }
+
+
+          # Upload to deposition
+          if(upload_data) {
+            filename = paste0(nam, "_", directory,".", fileformat)
+            UPLOAD_TO_DEPOSITION(filepath = filepath,
+                                 name     = filename,
+                                 id       = data_deposition$id,
+                                 token    = token,
+                                 instance = instance)
+          }
+        }
+      }
+    }
+  }
+
+
+
+
+
+  ### ----------- 6. DELETE EMPTY DIRECTORIES  ----------- #
+
+  delete = local_data_filepaths$path[!local_data_filepaths$path %in% newdirs &
+                                       !is.na(local_data_filepaths$path)]
+  if(length(delete) > 0){
+    cat("Apagando directórios vazios\n")
+    remove_files(
+      path = delete,
+      recursive = TRUE
+    )
+  }
+
+
+
+
+
+  ### ------------- 7. PUBLISH DEPOSITIONS  -------------- #
+
+
+  if(upload_data) {
+    PUBLISH_DEPOSITION(id    = data_deposition$id,
+                       token = token,
+                       instance = instance)
+  }
+
+
+  if(upload_rds_file){
+    PUBLISH_DEPOSITION(id    = rds_deposition$id,
+                       token = token,
+                       instance = instance)
+  }
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
